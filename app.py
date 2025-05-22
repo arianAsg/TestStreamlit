@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import jdatetime
 from datetime import datetime
 import os
 
@@ -74,7 +73,7 @@ elif menu == "تراکنش جدید":
         if date_choice == "ورود دستی":
             date = st.text_input("تاریخ (YYYY/MM/DD)")
         else:
-            date = jdatetime.datetime.today().strftime("%Y/%m/%d")
+            date = datetime.today().strftime("%Y/%m/%d")
 
         receipt = st.file_uploader("آپلود تصویر رسید (اختیاری)", type=["jpg", "png", "jpeg"])
 
