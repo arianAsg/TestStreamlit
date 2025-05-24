@@ -3,7 +3,10 @@ import pandas as pd
 from datetime import datetime
 import os
 import jdatetime
-
+from engine import delete_transaction, update_bank_balance
+from check_utils import register_check , display_checks
+from deb_utils import register_debt, display_debts
+from lines_utils import phone_numbers_management
 # تنظیمات اولیه
 st.set_page_config(page_title="مدیریت حساب‌های بانکی", layout="wide")
 
@@ -66,7 +69,12 @@ menu = st.sidebar.selectbox("منو", [
     "تراکنش جدید",
     "نمایش تمام تراکنش‌ها",
     "تراکنش‌های واریزی",
-    "تراکنش‌های برداشتی"
+    "تراکنش‌های برداشتی",
+    "تراکنش های روزانه",
+    "حذف تراکنش",
+    "مدیریت چک‌ها",
+    "مدیریت طلبکاران/بدهکاران",
+    "مدیریت شماره‌های تلفن و شرکا"
 ])
 
 # ---------------------
@@ -311,8 +319,182 @@ elif menu in ["نمایش تمام تراکنش‌ها", "تراکنش‌های 
                 """)
     else:
         st.info("تراکنشی یافت نشد.")
+# ---------------------
+# 📊 تراکنش های روزانه 
+# ---------------------
+elif menu == "تراکنش‌های روزانه":
+    from engine import filter_today_transactions  # ایمپورت تابع از فایل جدا
+    
+    st.header("📅 تراکنش‌های روز جاری")
+    
+    if os.path.exists(transactions_file):
+        df = pd.read_excel(transactions_file)
+        df_today = filter_today_transactions(df)
+        
+        if df_today.empty:
+            st.info("هیچ تراکنشی برای امروز ثبت نشده است.")
+        else:
+            # فرمت مبلغ
+            df_today["Amount"] = df_today["Amount"].apply(lambda x: "{:,.0f}".format(x))
+            
+            # تغییر نام ستون‌ها به فارسی برای نمایش بهتر
+            df_today.columns = ["نام بانک", "نوع تراکنش", "مبلغ", "تاریخ", "علت", "شخص", "رسید"]
+            
+            st.dataframe(df_today, use_container_width=True)
+            
+            total_income = df_today[df_today["نوع تراکنش"] == "واریز"]["مبلغ"].apply(lambda x: float(x.replace(",", ""))).sum()
+            total_expense = df_today[df_today["نوع تراکنش"] == "برداشت"]["مبلغ"].apply(lambda x: float(x.replace(",", ""))).sum()
+            
+            st.markdown(f"💰 مجموع واریزها: **{format_currency(total_income)} ریال**")
+            st.markdown(f"💸 مجموع برداشت‌ها: **{format_currency(total_expense)} ریال**")
 
-# راهنمای نصب
-st.sidebar.markdown("""
-### راهنمای نصب
-1. نصب کتابخانه‌های مورد نیاز:""")
+elif menu == "حذف تراکنش":
+    st.header("🗑️ حذف تراکنش")
+
+    if df_transactions.empty:
+        st.warning("هیچ تراکنشی برای حذف وجود ندارد.")
+    else:
+        df_display = df_transactions.copy()
+        df_display["Amount"] = df_display["Amount"].apply(format_currency)
+        df_display.columns = ["بانک", "نوع", "مبلغ", "تاریخ", "علت", "شخص", "رسید"]
+
+        selected_index = st.selectbox("یک تراکنش را برای حذف انتخاب کنید", df_display.index, format_func=lambda x: f"{df_display.loc[x, 'بانک']} - {df_display.loc[x, 'مبلغ']} - {df_display.loc[x, 'تاریخ']}")
+
+        if st.button("حذف تراکنش", type="primary"):
+            df_banks_new, df_transactions_new = delete_transaction(df_banks.copy(), df_transactions.copy(), selected_index)
+
+            if df_banks_new is not None and df_transactions_new is not None:
+                df_banks = df_banks_new
+                df_transactions = df_transactions_new
+                save_data(df_banks, df_transactions)
+                st.success("تراکنش با موفقیت حذف شد و موجودی بانک اصلاح گردید.")
+            else:
+                st.error("خطا در حذف تراکنش یا موجودی کافی برای اصلاح وجود ندارد.")
+# ---------------------
+# 📊 ثبت چک
+# ---------------------
+elif menu == "مدیریت چک‌ها":
+    st.header("مدیریت چک‌ها")
+    
+    submenu = st.radio("عملیات", ["ثبت چک جدید", "لیست چک‌ها"], horizontal=True)
+    
+    if submenu == "ثبت چک جدید":
+        st.subheader("ثبت چک جدید")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            check_type = st.radio("نوع چک", ["دریافتی", "صادر شده"])
+            check_number = st.text_input("شماره چک")
+            account_owner = st.text_input("نام صاحب حساب")
+            
+        with col2:
+            owner_name = st.text_input("نام دارنده چک")
+            amount = st.text_input("مبلغ چک", value="0")
+            description = st.text_input("بابت")
+            
+        # تاریخ وصول
+        due_date_choice = st.radio("تاریخ وصول", ["انتخاب تاریخ", "ورود دستی"], horizontal=True)
+        
+        if due_date_choice == "انتخاب تاریخ":
+            due_date = st.date_input("تاریخ وصول")
+        else:
+            due_date_input = st.text_input("تاریخ وصول (YYYY/MM/DD)")
+            try:
+                due_date = datetime.strptime(due_date_input, "%Y/%m/%d").date()
+            except:
+                st.error("فرمت تاریخ نامعتبر است. لطفاً از فرمت YYYY/MM/DD استفاده کنید.")
+                due_date = None
+        
+        # آپلود تصویر چک
+        check_image = st.file_uploader("تصویر چک (اختیاری)", type=["jpg", "png", "jpeg"])
+        
+        if st.button("ثبت چک", type="primary"):
+            if not check_number:
+                st.error("لطفاً شماره چک را وارد کنید.")
+            elif not amount or parse_currency(amount) <= 0:
+                st.error("لطفاً مبلغ معتبر وارد کنید.")
+            elif not due_date:
+                st.error("لطفاً تاریخ وصول معتبر وارد کنید.")
+            else:
+                success, jalali_date = register_check(
+                    check_type, check_number, due_date, owner_name,
+                    parse_currency(amount), description, account_owner, check_image
+                )
+                
+                if success:
+                    st.success(f"""
+                    چک با موفقیت ثبت شد:
+                    - نوع چک: {check_type}
+                    - شماره چک: {check_number}
+                    - تاریخ وصول: {jalali_date}
+                    - مبلغ: {format_currency(amount)} ریال
+                    """)
+                else:
+                    st.error(f"خطا در ثبت چک: {jalali_date}")
+    
+    elif submenu == "لیست چک‌ها":
+        st.subheader("لیست چک‌ها")
+        display_checks()
+elif menu == "مدیریت طلبکاران/بدهکاران":
+    st.header("مدیریت طلبکاران و بدهکاران")
+    
+    submenu = st.radio("عملیات", ["ثبت جدید", "لیست طلبکاران/بدهکاران"], horizontal=True, key="debt_submenu")
+    
+    if submenu == "ثبت جدید":
+        st.subheader("ثبت طلبکار/بدهکار جدید")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            debt_type = st.radio("نوع", ["طلبکار", "بدهکار"], horizontal=True)
+            name = st.text_input("نام شخص/شرکت")
+            amount = st.text_input("مبلغ", value="0")
+            
+        with col2:
+            description = st.text_input("بابت")
+            contact = st.text_input("اطلاعات تماس (اختیاری)")
+            
+        # تاریخ وصول
+        due_date_choice = st.radio("تاریخ وصول", ["انتخاب تاریخ", "ورود دستی"], horizontal=True, key="due_date_choice")
+        
+        if due_date_choice == "انتخاب تاریخ":
+            due_date = st.date_input("تاریخ وصول")
+            jalali_due_date = convert_to_jalali(due_date.strftime("%Y/%m/%d"))
+        else:
+            due_date_input = st.text_input("تاریخ وصول (YYYY/MM/DD)", key="manual_due_date")
+            try:
+                jalali_due_date = due_date_input
+                due_date = datetime.strptime(due_date_input, "%Y/%m/%d").date()
+            except:
+                st.error("فرمت تاریخ نامعتبر است. لطفاً از فرمت YYYY/MM/DD استفاده کنید.")
+                due_date = None
+        
+        if st.button("ثبت طلبکار/بدهکار", type="primary"):
+            if not name:
+                st.error("لطفاً نام را وارد کنید.")
+            elif not amount or parse_currency(amount) <= 0:
+                st.error("لطفاً مبلغ معتبر وارد کنید.")
+            elif not due_date:
+                st.error("لطفاً تاریخ وصول معتبر وارد کنید.")
+            else:
+                success, registered_date = register_debt(
+                    debt_type, name, parse_currency(amount), 
+                    description, jalali_due_date, contact
+                )
+                
+                if success:
+                    st.success(f"""
+                    {debt_type} با موفقیت ثبت شد:
+                    - نام: {name}
+                    - مبلغ: {format_currency(amount)} ریال
+                    - تاریخ وصول: {jalali_due_date}
+                    - تاریخ ثبت: {registered_date}
+                    """)
+                else:
+                    st.error(f"خطا در ثبت {debt_type}: {registered_date}")
+    
+    elif submenu == "لیست طلبکاران/بدهکاران":
+        st.subheader("لیست طلبکاران و بدهکاران")
+        display_debts()
+
+elif  menu == "مدیریت شماره‌های تلفن و شرکا":
+    phone_numbers_management()
