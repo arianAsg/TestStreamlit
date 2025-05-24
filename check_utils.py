@@ -8,7 +8,8 @@ import os
 import jdatetime
 from PIL import Image
 import io
-
+checks_file = "checks.xlsx"
+checks_dir = "checks_images"
 def format_currency(amount):
     """فرمت کردن مبلغ با کاما برای نمایش"""
     try:
